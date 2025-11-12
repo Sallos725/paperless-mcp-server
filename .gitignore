@@ -1,0 +1,16 @@
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+
+node_modules
+
+build
+dist
+
+.env
+!.env.example
+
+.github
+docker-compose.yml
+Dockerfile
