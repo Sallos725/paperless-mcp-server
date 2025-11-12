@@ -11,7 +11,6 @@ yarn-error.log*
 .node_repl_history
 .nyc_output
 coverage/
-dist/
 build/
 .env
 .env.local
@@ -43,7 +42,6 @@ Thumbs.db
 
 # Logs & Temporary Files
 *.log
-logs/
 tmp/
 temp/
 *.tmp
