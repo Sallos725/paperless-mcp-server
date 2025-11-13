@@ -5,105 +5,86 @@ import { z } from "zod";
 import 'dotenv/config';
 
 class PaperlessClient {
-    private baseUrl: string;
-    private apiKey: string;
+    private readonly baseUrl: string;
+    private readonly apiKey: string;
 
     constructor(baseUrl: string, apiKey: string) {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
     }
 
+    buildUrl(
+        query?: string,
+        tags?: number[],
+        ordering?: string,
+        id?: number,
+        created?: string,
+        added_after?: string,
+        added_before?: string
+    ) {
+        let url = `${this.baseUrl}/api/documents/`;
+        if (query) {
+            url += `?query=${query}`;
+        }
+        /*
+        if (tags && tags.length > 0) {
+            url += (url.includes('?') ? '&' : '?') + `tags__id__in=${tags.join(',')}`;
+        }
+        */
+        if (created) {
+            url += (url.includes('?') ? '&' : '?') + `created__gte=${created}`
+        }
+        if (added_after) {
+            url += (url.includes('?') ? '&' : '?') + `added__gte=${added_after}`;
+        }
+        if (added_before) {
+            url += (url.includes('?') ? '&' : '?') + `added__lte=${added_before}`;
+        }
+        if (ordering) {
+            url += (url.includes('?') ? '&' : '?') + `ordering=${ordering}`;
+        }
+        return url;
+    }
+
     async getDocuments(
-        query: string,
-        tags?: string[],
+        query?: string,
+        tags?: number[],
         ordering?: string,
         id?: number,
         created?: string,
         added_after?: string,
         added_before?: string
     ): Promise<any> {
-        const params = new URLSearchParams({
-            query: query,
-        });
+        try {
+            const apiUrl = this.buildUrl(
+                query,
+                tags,
+                ordering,
+                id,
+                created,
+                added_after,
+                added_before
+            )
 
-        let apiUrl = `${this.baseUrl}/api/documents/?query=${query}`
-
-        if (tags) {
-            apiUrl.concat('tags__id__in', tags.join(','));
-        }
-        if (created) {
-            apiUrl += `&created__gte${created}`
-        }
-        if (added_after) {
-            apiUrl += `&added__gte${added_after}`;
-        }
-        if (added_before) {
-            apiUrl += `&added__lte${added_before}`;
-        }
-        if (ordering) {
-            apiUrl += `&ordering${ordering}`;
-        }
-
-        const response = await axios.get(
-
-            apiUrl,
-            {
-                params,
-                headers: {
-                    'Authorization': `Token ${this.apiKey}`
+            const response = await axios.get(
+                apiUrl,
+                {
+                    headers: {
+                        'Authorization': `Token ${this.apiKey}`
+                    }
                 }
-            }
-        );
+            );
 
-        if (response.data.count < 1) {
-            console.error(`No Documents were found`);
-        }
-        else {
             return response.data;
         }
-    }
-
-    /*
-    async getDocumentContent(query: string): Promise<any> {
-        const response= await axios.get(
-            `${this.baseUrl}/api/documents/?query=${query}/`,
-            {
-                headers: {
-                    'Authorization': `Token ${this.apiKey}`
-                }
+        catch (e) {
+            if (axios.isAxiosError(e) && e.response?.status == 401) {
+                throw new Error(`Unauthorized: Please check your API key`);
             }
-        );
-
-        if (response.data.includes('__search_hit__') && response.data.score > 0.3) {
-            return response.data.content;
+            console.error(`Error in getDocuments: `, e)
+            throw e;
         }
-        else {
-            console.error(`No Content`);
-        }
-
-        //return response.data.content || console.error("No Content");
     }
-
-    async getDocumentMetadata(id: number): Promise<any> {
-        const response = await axios.get(
-            `${this.baseUrl}/api/documents/${id}`,
-            {
-                headers: {
-                    'Authorization': `Token ${this.apiKey}`
-                }
-            }
-        );
-
-        return {
-            id: response.data.id,
-            title: response.data.title,
-            created: response.data.created,
-            tags: response.data.tags,
-        }
-
-    }
-    */
-
 }
 
 // Init servers
@@ -112,9 +93,15 @@ const server = new McpServer({
     version: '1.0.0'
 });
 
+const paperlessUrl = process.env.PAPERLESS_URL || 'http://localhost:8000';
+const paperlessApiKey = process.env.PAPERLESS_API_KEY;
+if (!paperlessApiKey || paperlessApiKey.trim() === '') {
+    throw new Error('Missing Paperless-ngx API Key');
+}
+
 const paperless = new PaperlessClient(
-    process.env.PAPERLESS_URL || 'http://localhost:8000',
-    process.env.PAPERLESS_API_KEY || ''
+    paperlessUrl,
+    paperlessApiKey
 );
 
 // Tools
@@ -124,13 +111,13 @@ server.registerTool(
         title: "Get Documents",
         description: "Search for documents in paperless-ngx",
         inputSchema: {
-            query: z.string(),
-            tags: z.array(z.string()).optional(),
+            query: z.string().optional(),
+            tags: z.array(z.number()).optional(),
             ordering: z.string().optional(),
             id: z.number().optional(),
-            created:z.string().optional(),
-            added_after: z.string().optional(),
-            added_before: z.string().optional()
+            created:z.string().date().optional(),
+            added_after: z.string().date().optional(),
+            added_before: z.string().date().optional()
         },
     },
     async ({
@@ -142,78 +129,38 @@ server.registerTool(
                added_after,
                added_before
     }) => {
-        const output = await paperless.getDocuments(
-            query,
-            tags,
-            ordering,
-            id,
-            created,
-            added_after,
-            added_before
-        );
-        return {
-            content: [
-                {
-                    type: 'text',
-                    text: JSON.stringify(output),
-                }
-            ],
-            structuredContent: output
-        };
-    }
-);
-
-/*
-server.registerTool(
-    'search_document_content',
-    {
-        title: "Search Document Content",
-        description: "Search for contents of document in paperless-ngx",
-        inputSchema: { query: z.string(), id: z.number() },
-    },
-    async ({query}) => {
-        const output = await paperless.getDocumentContent(query);
-        return {
-            content: [
-                {
-                    type: 'text',
-                    text: JSON.stringify(output),
-                }
-            ],
-            structuredContent: output
-        };
-    }
-);
-*/
-
-/*
-server.registerTool(
-    'search_document_metadata',
-    {
-        title: "Search Document Metadata",
-        description: "Search for metadata of document in paperless-ngx",
-        inputSchema: { id: z.number() },
-        outputSchema: {
-            id: z.number(),
-            title: z.string(),
-            created: z.string(),
-            tags: z.array(z.string())
+        try {
+            const output = await paperless.getDocuments(
+                query,
+                tags,
+                ordering,
+                id,
+                created,
+                added_after,
+                added_before
+            );
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: JSON.stringify(output),
+                    }
+                ],
+                structuredContent: output
+            };
         }
-    },
-    async ({id}) => {
-        const output = await paperless.getDocumentMetadata(id);
-        return {
-            content: [
-                {
-                    type: 'text',
-                    object: JSON.stringify(output),
-                }
-            ],
-            structuredContent: output
-        };
+        catch (error: any) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Error: ${error.message ?? 'Error while fetching documents.'}`
+                    }
+                ]
+            }
+        }
     }
 );
-*/
 
 async function main() {
     const transport = new StdioServerTransport();
