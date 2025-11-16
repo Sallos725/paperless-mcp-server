@@ -6,12 +6,12 @@ Does only one thing: Read documents from paperless-ngx
 - Search documents by:
   - Title
   - Tags
-  - ID
+  - Document ID
   - Added before
   - Added after
 
 ### Can I retrieve ID from query and feed it back?
-No.
+Apparently you can feed name of the tag instead of ID of the tags...
 
 ## How to Use
 1. Clone this repository.

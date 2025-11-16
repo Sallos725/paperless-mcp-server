@@ -16,9 +16,9 @@ class PaperlessClient {
     // URL builder for get functions
     buildUrl(
         query?: string,
-        tags?: number[],
+        tagsName?: string[],
         ordering?: string,
-        id?: number,
+        documentId?: number,
         created?: string,
         added_after?: string,
         added_before?: string
@@ -27,14 +27,19 @@ class PaperlessClient {
         if (query) {
             url += `?query=${query}`;
         }
-        /*
-        if (tags && tags.length > 0) {
-            url += (url.includes('?') ? '&' : '?') + `tags__id__in=${tags.join(',')}`;
+
+        if (tagsName && tagsName.length === 1) {
+            url += (url.includes('?') ? '&' : '?') + `tags__name__icontains=${tagsName[0]}`
         }
+
+        /*
         if (created) {
             url += (url.includes('?') ? '&' : '?') + `created__gte=${created}`
         }
         */
+        if (documentId) {
+            url += (url.includes('?') ? '&' : '?') + `id=${documentId}`;
+        }
         if (added_after) {
             url += (url.includes('?') ? '&' : '?') + `added__gte=${added_after}`;
         }
@@ -72,18 +77,18 @@ class PaperlessClient {
     // GET Tools
     async getDocuments(
         query?: string,
-        tags?: number[],
+        tagsName?: string[],
         ordering?: string,
-        id?: number,
+        documentId?: number,
         created?: string,
         added_after?: string,
         added_before?: string
     ): Promise<any> {
         const apiUrl = this.buildUrl(
             query,
-            tags,
+            tagsName,
             ordering,
-            id,
+            documentId,
             created,
             added_after,
             added_before
@@ -95,7 +100,7 @@ class PaperlessClient {
     async getInfoFromTags(query: string): Promise<{
         matchCount: number;
         info: {
-            id: number,
+            tagId: number,
             name: string,
             count: number}[]
     }> {
@@ -113,7 +118,7 @@ class PaperlessClient {
             const info = []
             for (const data of response.data.results) {
                 info.push({
-                    id: data.id,
+                    tagId: data.id,
                     name: data.name,
                     count: data.document_count
                 })
@@ -163,7 +168,7 @@ function projectToLightDocuments(raw: any): lightDocument[] {
                 : [];
 
     return docs.map((doc: any) => ({
-        id: doc.id,
+        documentId: doc.id,
         title: doc.title,
         created: doc.created,
         added: doc.added,
@@ -188,9 +193,9 @@ server.registerTool(
         description: "Search for documents in Paperless-ngx and return only their IDs and titles to minimize LLM context size.",
         inputSchema: {
             query: z.string().optional(),
-            tags: z.array(z.number()).optional(),
+            tagsName: z.array(z.string()).optional(),
             ordering: z.string().optional(),
-            id: z.number().optional(),
+            documentId: z.number().optional(),
             created: z.string().optional(),
             added_after: z.string().optional(),
             added_before: z.string().optional(),
@@ -198,9 +203,9 @@ server.registerTool(
     },
     async ({
                query,
-               tags,
+               tagsName,
                ordering,
-               id,
+               documentId,
                created,
                added_after,
                added_before,
@@ -208,9 +213,9 @@ server.registerTool(
         try {
             const output = await paperless.getDocuments(
                 query,
-                tags,
+                tagsName,
                 ordering,
-                id,
+                documentId,
                 created,
                 added_after,
                 added_before,
@@ -247,30 +252,30 @@ server.registerTool(
         title: "Get document metadata",
         description: "Search for documents in Paperless-ngx and return light metadata (id, title, created, added, tags) to keep LLM context small.",
         inputSchema: {
-            query: z.string().optional(),
-            tags: z.array(z.number()).optional(),
+            titleQuery: z.string().optional(),
+            tagsName: z.array(z.string()).optional(),
             ordering: z.string().optional(),
-            id: z.number().optional(),
+            documentId: z.number().optional(),
             created: z.string().optional(),
             added_after: z.string().optional(),
             added_before: z.string().optional(),
         },
     },
     async ({
-               query,
-               tags,
+               titleQuery,
+               tagsName,
                ordering,
-               id,
+               documentId,
                created,
                added_after,
                added_before,
            }) => {
         try {
             const output = await paperless.getDocuments(
-                query,
-                tags,
+                titleQuery,
+                tagsName,
                 ordering,
-                id,
+                documentId,
                 created,
                 added_after,
                 added_before,
@@ -308,9 +313,9 @@ server.registerTool(
         description: "Search for documents in Paperless-ngx and return the full raw JSON response (use sparingly; this can be large).",
         inputSchema: {
             query: z.string().optional(),
-            tags: z.array(z.number()).optional(),
+            tagsName: z.array(z.string()).optional(),
             ordering: z.string().optional(),
-            id: z.number().optional(),
+            documentId: z.number().optional(),
             created: z.string().optional(),
             added_after: z.string().optional(),
             added_before: z.string().optional(),
@@ -318,9 +323,9 @@ server.registerTool(
     },
     async ({
                query,
-               tags,
+               tagsName,
                ordering,
-               id,
+               documentId,
                created,
                added_after,
                added_before,
@@ -328,9 +333,9 @@ server.registerTool(
         try {
             const output = await paperless.getDocuments(
                 query,
-                tags,
+                tagsName,
                 ordering,
-                id,
+                documentId,
                 created,
                 added_after,
                 added_before,
@@ -371,7 +376,7 @@ server.registerTool(
                 matchCount: z.number(),
                 matchInfo: z.array(
                     z.object({
-                        id: z.number(),
+                        tagId: z.number(),
                         name: z.string(),
                         count: z.number()
                     })
