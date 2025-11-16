@@ -13,6 +13,7 @@ class PaperlessClient {
         this.apiKey = apiKey;
     }
 
+    // URL builder for get functions
     buildUrl(
         query?: string,
         tags?: number[],
@@ -67,6 +68,8 @@ class PaperlessClient {
         }
     }
 
+
+    // GET Tools
     async getDocuments(
         query?: string,
         tags?: number[],
@@ -89,7 +92,13 @@ class PaperlessClient {
         return this.fetchDocuments(apiUrl);
     }
 
-    async getInfoFromTags(query: string): Promise<tagInfo[]> {
+    async getInfoFromTags(query: string): Promise<{
+        matchCount: number;
+        info: {
+            id: number,
+            name: string,
+            count: number}[]
+    }> {
         let url = `${this.baseUrl}/api/tags/?name__icontains=${query}`;
         try {
             const response = await axios.get(
@@ -100,13 +109,16 @@ class PaperlessClient {
                 }
             );
 
-            const result = response.data.results ?? [];
-
-            return result.map((t: any) => ({
-                id: t.id,
-                name: t.name,
-                count: t.document_count
-            }));
+            const matchCount: number = response.data.count;
+            const info = []
+            for (const data of response.data.results) {
+                info.push({
+                    id: data.id,
+                    name: data.name,
+                    count: data.document_count
+                })
+            }
+            return { matchCount, info }
         }
         catch (e) {
             console.error(`Error with tag search: ${e}`)
@@ -114,14 +126,6 @@ class PaperlessClient {
         }
     }
 }
-
-// types for tag search
-type tagInfo = {
-    id: number;
-    name: string;
-    count: number;
-};
-
 type lightDocument = {
     title: string,
     id?: number,
@@ -356,22 +360,36 @@ server.registerTool(
 
 // 4. Tag search
 server.registerTool(
-    'get_info_from_tags',
+    'get_info_from_tag',
     {
-        title: 'Get Information from Tag search',
+        title: 'Tag Search',
         description: 'Search for tags, and if exists, return information about them.',
         inputSchema: {
             query: z.string()
         },
+        outputSchema: {
+                matchCount: z.number(),
+                matchInfo: z.array(
+                    z.object({
+                        id: z.number(),
+                        name: z.string(),
+                        count: z.number()
+                    })
+                )
+        }
     },
     async ({ query }) => {
         try {
-            const output = await paperless.getInfoFromTags(query)
+            const data = await paperless.getInfoFromTags(query);
+            const output = {
+                matchCount: data.matchCount,
+                matchInfo: data.info
+            }
             return {
                 content: [
                     {
                         type: 'text',
-                        text: JSON.stringify(output, null, 2),
+                        text: JSON.stringify(output),
                     }
                 ],
                 structuredContent: output
