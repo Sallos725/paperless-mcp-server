@@ -13,30 +13,26 @@ class PaperlessClient {
         this.apiKey = apiKey;
     }
 
-    // URL builder for get functions
-    buildUrl(
+    private buildUrl(
         query?: string,
-        tagsName?: string[],
+        tags?: string[],
         ordering?: string,
         documentId?: number,
-        created?: string,
         added_after?: string,
         added_before?: string
-    ) {
+    ): string {
         let url = `${this.baseUrl}/api/documents/`;
+
         if (query) {
-            url += `?query=${query}`;
+            url += `?query=${encodeURIComponent(query)}`;
         }
 
-        if (tagsName && tagsName.length === 1) {
-            url += (url.includes('?') ? '&' : '?') + `tags__name__icontains=${tagsName[0]}`
+        if (tags && tags.length > 0) {
+            for (const tag of tags) {
+                url += (url.includes('?') ? '&' : '?') + `tags__name__icontains=${encodeURIComponent(tag)}`;
+            }
         }
 
-        /*
-        if (created) {
-            url += (url.includes('?') ? '&' : '?') + `created__gte=${created}`
-        }
-        */
         if (documentId) {
             url += (url.includes('?') ? '&' : '?') + `id=${documentId}`;
         }
@@ -49,102 +45,86 @@ class PaperlessClient {
         if (ordering) {
             url += (url.includes('?') ? '&' : '?') + `ordering=${ordering}`;
         }
+
         return url;
     }
 
-    private async fetchDocuments(apiUrl: string): Promise<any> {
+    private async get(apiUrl: string): Promise<any> {
         try {
-            const response = await axios.get(
-                apiUrl, {
-                    headers: {
-                        'Authorization': `Token ${this.apiKey}`
-                    }
-                }
-            );
-
+            const response = await axios.get(apiUrl, {
+                headers: { 'Authorization': `Token ${this.apiKey}` }
+            });
             return response.data;
-        }
-        catch (e) {
+        } catch (e) {
             if (axios.isAxiosError(e) && e.response?.status === 401) {
                 throw new Error(`Unauthorized: Please check your API key`);
             }
-            console.error(`Error fetching documents: `, e);
             throw e;
         }
     }
 
-
-    // GET Tools
     async getDocuments(
         query?: string,
-        tagsName?: string[],
+        tags?: string[],
         ordering?: string,
         documentId?: number,
-        created?: string,
         added_after?: string,
         added_before?: string
     ): Promise<any> {
-        const apiUrl = this.buildUrl(
-            query,
-            tagsName,
-            ordering,
-            documentId,
-            created,
-            added_after,
-            added_before
-        );
-
-        return this.fetchDocuments(apiUrl);
+        const apiUrl = this.buildUrl(query, tags, ordering, documentId, added_after, added_before);
+        return this.get(apiUrl);
     }
 
-    async getInfoFromTags(query: string): Promise<{
-        matchCount: number;
-        info: {
-            tagId: number,
-            name: string,
-            count: number}[]
+    async getDocumentById(id: number): Promise<{
+        id: number;
+        title: string;
+        created: string;
+        content: string;
     }> {
-        let url = `${this.baseUrl}/api/tags/?name__icontains=${query}`;
-        try {
-            const response = await axios.get(
-                url, {
-                    headers: {
-                        'Authorization': `Token ${this.apiKey}`
-                    }
-                }
-            );
+        const url = `${this.baseUrl}/api/documents/${id}/`;
+        const d = await this.get(url);
+        return {
+            id: d.id,
+            title: d.title,
+            created: d.created,
+            content: d.content ?? '',
+        };
+    }
 
-            const matchCount: number = response.data.count;
-            const info = []
-            for (const data of response.data.results) {
-                info.push({
-                    tagId: data.id,
-                    name: data.name,
-                    count: data.document_count
-                })
-            }
-            return { matchCount, info }
+    async getTagNames(tagIds: number[]): Promise<Map<number, string>> {
+        if (tagIds.length === 0) return new Map();
+        const url = `${this.baseUrl}/api/tags/?page_size=500`;
+        const data = await this.get(url);
+        const map = new Map<number, string>();
+        for (const tag of data.results) {
+            map.set(tag.id, tag.name);
         }
-        catch (e) {
-            console.error(`Error with tag search: ${e}`)
-            throw(e)
+        return map;
+    }
+
+    async searchTags(query: string): Promise<{
+        matchCount: number;
+        info: { tagId: number; name: string; count: number }[];
+    }> {
+        const url = `${this.baseUrl}/api/tags/?name__icontains=${encodeURIComponent(query)}`;
+        try {
+            const data = await this.get(url);
+            const info = data.results.map((t: any) => ({
+                tagId: t.id,
+                name: t.name,
+                count: t.document_count,
+            }));
+            return { matchCount: data.count, info };
+        } catch (e) {
+            console.error(`Error with tag search: ${e}`);
+            throw e;
         }
     }
 }
-type lightDocument = {
-    title: string,
-    id?: number,
-    created?: string,
-    added?: string,
-    tags?: number[]
-}
 
-type DocumentTitle = string;
-
-// Init servers
-const server = new McpServer({
+export const server = new McpServer({
     name: 'Paperless-ngx-MCP-Server',
-    version: '1.0.0'
+    version: '2.0.0'
 });
 
 const paperlessUrl = process.env.PAPERLESS_URL || 'http://localhost:8000';
@@ -153,266 +133,132 @@ if (!paperlessApiKey || paperlessApiKey.trim() === '') {
     throw new Error('Missing Paperless-ngx API Key');
 }
 
-const paperless = new PaperlessClient(
-    paperlessUrl,
-    paperlessApiKey
-);
+const paperless = new PaperlessClient(paperlessUrl, paperlessApiKey);
 
-function projectToLightDocuments(raw: any): lightDocument[] {
-    const docs = Array.isArray(raw?.results)
-        ? raw.results
-        : Array.isArray(raw)
-            ? raw
-            : raw
-                ? [raw]
-                : [];
-
-    return docs.map((doc: any) => ({
-        documentId: doc.id,
-        title: doc.title,
-        created: doc.created,
-        added: doc.added,
-        tags: doc.tags,
-    }));
-}
-
-function projectToTitles(raw: any): DocumentTitle[] {
-    const docs = projectToLightDocuments(raw);
-    return docs
-        .filter((d) => !!d.title)
-        .map((d) => d.title as string);
-}
-
-// Tools
-
-// 1. Titles only (very light payload for LLM)
+// Tool 1: search_documents
 server.registerTool(
-    'get_document_title',
+    'search_documents',
     {
-        title: "Get document titles",
-        description: "Search for documents in Paperless-ngx and return only their IDs and titles to minimize LLM context size.",
+        title: 'Search Documents',
+        description:
+            'START HERE for any document-related task. Searches Paperless-ngx and returns a list of matching documents with their ID, title, date, and tag names. Use the returned document IDs to fetch full text content with `get_document_content`. If you need to search by tag name but are not sure of the exact name, call `search_tags` first.',
         inputSchema: {
-            query: z.string().optional(),
-            tagsName: z.array(z.string()).optional(),
-            ordering: z.string().optional(),
-            documentId: z.number().optional(),
-            created: z.string().optional(),
-            added_after: z.string().optional(),
-            added_before: z.string().optional(),
+            query: z.string().optional()
+                .describe('Full-text search across document content and title.'),
+            tags: z.array(z.string()).optional()
+                .describe('Filter by one or more tag names (case-insensitive substring match, OR logic).'),
+            document_id: z.number().optional()
+                .describe('Fetch a specific document by its numeric ID.'),
+            added_after: z.string().optional()
+                .describe('ISO 8601 date. Return documents added on or after this date (e.g. 2024-01-01).'),
+            added_before: z.string().optional()
+                .describe('ISO 8601 date. Return documents added on or before this date.'),
+            ordering: z.string().optional()
+                .describe('Sort field. Examples: -created (newest first), title, added.'),
         },
     },
-    async ({
-               query,
-               tagsName,
-               ordering,
-               documentId,
-               created,
-               added_after,
-               added_before,
-           }) => {
+    async ({ query, tags, document_id, added_after, added_before, ordering }) => {
         try {
-            const output = await paperless.getDocuments(
-                query,
-                tagsName,
-                ordering,
-                documentId,
-                created,
-                added_after,
-                added_before,
-            );
+            const raw = await paperless.getDocuments(query, tags, ordering, document_id, added_after, added_before);
 
-            const titles = projectToTitles(output);
+            const results: any[] = Array.isArray(raw?.results) ? raw.results : Array.isArray(raw) ? raw : raw ? [raw] : [];
+
+            const allTagIds = [...new Set(results.flatMap((d: any) => d.tags ?? []))];
+            const tagMap = await paperless.getTagNames(allTagIds);
+
+            const documents = results.map((d: any) => ({
+                id: d.id,
+                title: d.title,
+                created: d.created,
+                added: d.added,
+                tags: (d.tags ?? []).map((id: number) => tagMap.get(id) ?? String(id)),
+            }));
+
+            const output = { count: raw?.count ?? documents.length, documents };
 
             return {
-                content: [
-                    {
-                        type: 'text',
-                        text: JSON.stringify(titles, null, 2),
-                    }
-                ],
-                structuredContent: { titles },
+                content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
+                structuredContent: output,
             };
         } catch (error: any) {
             return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `Error: ${error?.message ?? 'Error while fetching document titles.'}`,
-                    }
-                ]
+                content: [{ type: 'text', text: `Error: ${error?.message ?? 'Error while searching documents.'}` }],
             };
         }
     }
 );
 
-// 2. Metadata only (lightDocument projection)
+// Tool 2: get_document_content
 server.registerTool(
-    'get_document_meta',
+    'get_document_content',
     {
-        title: "Get document metadata",
-        description: "Search for documents in Paperless-ngx and return light metadata (id, title, created, added, tags) to keep LLM context small.",
+        title: 'Get Document Content',
+        description:
+            'Fetches the full OCR text content of one or more documents by their numeric IDs. Use this after `search_documents` to read the actual text of documents for answering questions. Pass multiple IDs to retrieve them in one call.',
         inputSchema: {
-            titleQuery: z.string().optional(),
-            tagsName: z.array(z.string()).optional(),
-            ordering: z.string().optional(),
-            documentId: z.number().optional(),
-            created: z.string().optional(),
-            added_after: z.string().optional(),
-            added_before: z.string().optional(),
+            document_ids: z.array(z.number()).min(1)
+                .describe('List of document IDs to fetch content for. Get IDs from search_documents first.'),
         },
     },
-    async ({
-               titleQuery,
-               tagsName,
-               ordering,
-               documentId,
-               created,
-               added_after,
-               added_before,
-           }) => {
-        try {
-            const output = await paperless.getDocuments(
-                titleQuery,
-                tagsName,
-                ordering,
-                documentId,
-                created,
-                added_after,
-                added_before,
-            );
+    async ({ document_ids }) => {
+        const results = await Promise.allSettled(
+            document_ids.map((id) => paperless.getDocumentById(id))
+        );
 
-            const meta = projectToLightDocuments(output);
+        const documents = results.map((r, i) =>
+            r.status === 'fulfilled'
+                ? r.value
+                : { id: document_ids[i], error: (r.reason as any)?.message ?? 'Failed to fetch' }
+        );
 
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: JSON.stringify(meta, null, 2),
-                    }
-                ],
-                structuredContent: { documents: meta },
-            };
-        } catch (error: any) {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `Error: ${error?.message ?? 'Error while fetching document metadata.'}`,
-                    }
-                ]
-            };
-        }
+        const output = { documents };
+
+        return {
+            content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
+            structuredContent: output,
+        };
     }
 );
 
-// 3. Full Document
+// Tool 3: search_tags
 server.registerTool(
-    'get_document',
+    'search_tags',
     {
-        title: "Get documents with full content",
-        description: "Search for documents in Paperless-ngx and return the full raw JSON response (use sparingly; this can be large).",
-        inputSchema: {
-            query: z.string().optional(),
-            tagsName: z.array(z.string()).optional(),
-            ordering: z.string().optional(),
-            documentId: z.number().optional(),
-            created: z.string().optional(),
-            added_after: z.string().optional(),
-            added_before: z.string().optional(),
-        },
-    },
-    async ({
-               query,
-               tagsName,
-               ordering,
-               documentId,
-               created,
-               added_after,
-               added_before,
-           }) => {
-        try {
-            const output = await paperless.getDocuments(
-                query,
-                tagsName,
-                ordering,
-                documentId,
-                created,
-                added_after,
-                added_before,
-            );
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: JSON.stringify(output, null, 2),
-                    }
-                ],
-                structuredContent: output
-            };
-        }
-        catch (error: any) {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `Error: ${error?.message ?? 'Error while fetching documents.'}`
-                    }
-                ]
-            };
-        }
-    }
-);
-
-// 4. Tag search
-server.registerTool(
-    'get_info_from_tag',
-    {
-        title: 'Tag Search',
-        description: 'Search for tags, and if exists, return information about them.',
+        title: 'Search Tags',
+        description:
+            'Searches for tags by name. Use this when you need to confirm a tag exists or find its exact name before filtering documents with `search_documents`. Returns tag name, ID, and document count.',
         inputSchema: {
             query: z.string()
+                .describe('Partial or full tag name to search for (case-insensitive).'),
         },
         outputSchema: {
-                matchCount: z.number(),
-                matchInfo: z.array(
-                    z.object({
-                        tagId: z.number(),
-                        name: z.string(),
-                        count: z.number()
-                    })
-                )
-        }
+            matchCount: z.number(),
+            matchInfo: z.array(z.object({
+                tagId: z.number(),
+                name: z.string(),
+                count: z.number(),
+            })),
+        },
     },
     async ({ query }) => {
         try {
-            const data = await paperless.getInfoFromTags(query);
+            const data = await paperless.searchTags(query);
             const output = {
                 matchCount: data.matchCount,
-                matchInfo: data.info
-            }
+                matchInfo: data.info,
+            };
             return {
-                content: [
-                    {
-                        type: 'text',
-                        text: JSON.stringify(output),
-                    }
-                ],
-                structuredContent: output
+                content: [{ type: 'text', text: JSON.stringify(output) }],
+                structuredContent: output,
+            };
+        } catch (error: any) {
+            return {
+                content: [{ type: 'text', text: `Error: ${error?.message ?? 'Error while searching tags.'}` }],
+                structuredContent: { matchCount: 0, matchInfo: [] },
             };
         }
-        catch (error: any) {
-            return {
-                content: [
-                    {
-                        type: 'text',
-                        text: `Error ${error?.message ?? 'Error while looking for tags'}`
-                    }
-                ],
-                structuredContent: error
-            }
-        }
     }
-)
+);
 
 async function main() {
     const transport = new StdioServerTransport();
